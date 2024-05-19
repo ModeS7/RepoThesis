@@ -2,7 +2,6 @@ from monai.data import Dataset, DataLoader, decollate_batch, CacheDataset
 from torch.utils.data import ConcatDataset
 from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize, CenterSpatialCrop, Activations,AsDiscrete, RandScaleIntensity, RandShiftIntensity, RandFlip, CropForeground, RandRotate90, RandSpatialCrop, RandRotate, RandAdjustContrast, RandHistogramShift, RandSpatialCrop, SpatialPad
 from monai.networks.nets import UNet
-from monai.metrics import DiceMetric
 from monai.networks.layers import Norm
 from monai.inferers import sliding_window_inference
 from sklearn.metrics import confusion_matrix, recall_score, precision_score
@@ -14,7 +13,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import nibabel as nib
 import cv2
-import pandas as pd
 
 from helper_functions import NiFTIDataset, transform_train_mask, extract_slices, merge_data
 from performance_functions import dice_per_lesion
