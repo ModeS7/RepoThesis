@@ -1,3 +1,6 @@
+'''Code for finding the inception score. This code was written following examples from the pytorch-ignite framework
+https://pytorch.org/ignite/generated/ignite.metrics.InceptionScore.html'''
+
 from collections import OrderedDict
 import torch
 from torch import nn
