@@ -1,4 +1,4 @@
-'''Training mask-conditioned diffusion model'''
+'''Training mask-conditioned diffusion model / training diffusion model for synthesizing annotation masks'''
 
 '''loading necessary libraries'''
 import nibabel as nib
@@ -17,7 +17,7 @@ from torch.utils.data import ConcatDataset
 from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize, CenterSpatialCrop, CropForeground
 
 
-model_input = 3 #1
+model_input = 2 #model input is 2 for mask-conditioned synthesis, 1 for synthetic annotation mask synthesis
 
 ############Diffusion model for synthetic bravo images controlled with annotation masks###########################
 #####Preprocessing##############
@@ -99,7 +99,7 @@ device = torch.device("cuda")
 
 model = DiffusionModelUNet(
     spatial_dims=2,
-    in_channels=2, 
+    in_channels=model_input, 
     out_channels=1,
     num_channels=(128, 256, 256), 
     attention_levels=(False, True, True),
@@ -139,16 +139,21 @@ for epoch in range(n_epochs):
         optimizer.zero_grad(set_to_none=True)
 
         with autocast(enabled=True):
-            images_bravo = batch[:,0,:,:].to(device) #to synthesize: bravo
-            images_labels = batch[:,1,:,:].to(device)  #conditionning: labels
-            images_bravo = torch.unsqueeze(images_bravo, 1)
-            images_labels = torch.unsqueeze(images_labels, 1)
-            noise = torch.randn_like(images_bravo).to(device)
-            timesteps = torch.randint(0, inferer.scheduler.num_train_timesteps, (images_bravo.shape[0],), device=images.device).long()
-
-            noisy_bravo = scheduler.add_noise(original_samples = images_bravo, noise = noise, timesteps = timesteps)
-            noisy_bravo_w_label = torch.cat((noisy_bravo, images_labels),dim = 1)
-            noise_pred = model(x = noisy_bravo_w_label, timesteps = timesteps)
+            if model_input == 1:
+                noise = torch.randn_like(images).to(device)
+                timesteps = torch.randint(0, inferer.scheduler.num_train_timesteps, (images.shape[0],), device=images.device).long()
+                noise_pred = inferer(inputs=images, diffusion_model=model, noise=noise, timesteps=timesteps)
+            if model_input == 2: 
+                images_bravo = batch[:,0,:,:].to(device) #to synthesize: bravo
+                images_labels = batch[:,1,:,:].to(device)  #conditionning: labels
+                images_bravo = torch.unsqueeze(images_bravo, 1)
+                images_labels = torch.unsqueeze(images_labels, 1)
+                noise = torch.randn_like(images_bravo).to(device)
+                timesteps = torch.randint(0, inferer.scheduler.num_train_timesteps, (images_bravo.shape[0],), device=images.device).long()
+    
+                noisy_bravo = scheduler.add_noise(original_samples = images_bravo, noise = noise, timesteps = timesteps)
+                noisy_bravo_w_label = torch.cat((noisy_bravo, images_labels),dim = 1)
+                noise_pred = model(x = noisy_bravo_w_label, timesteps = timesteps)
 
             loss = F.mse_loss(noise_pred.float(), noise.float())
       
@@ -160,6 +165,7 @@ for epoch in range(n_epochs):
     if (epoch + 1) % val_interval == 0:
           model.eval()
           path = "/Masteroppgave/Trained_models/BrainMets/Segmentations/conditional_syn_bravo_from_seg_" + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs)
+          #path = "/Masteroppgave/Trained_models/BrainMets/Segmentations/syn_seg_" + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs)
           torch.save(model.state_dict(), path)
         
             
