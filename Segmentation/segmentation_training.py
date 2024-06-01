@@ -1,4 +1,5 @@
-'''Code for training the segmentation model'''
+'''Code for training the segmentation model. This code was adapted from the MONAI consortsium's tutorial for 3D spleen segmentation
+https://github.com/Project-MONAI/tutorials/blob/main/3d_segmentation/spleen_segmentation_3d.ipynb'''
 
 from monai.data import Dataset, DataLoader, decollate_batch, CacheDataset
 from torch.utils.data import ConcatDataset
