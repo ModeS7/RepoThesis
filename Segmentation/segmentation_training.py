@@ -104,6 +104,26 @@ for i in range(5000):
     image = nib.load(syn_data_dir + "/" + syn_data_list[i]).get_fdata()
     image_MR = cv2.resize(image[:,:,0], dsize=(256,256),interpolation=cv2.INTER_CUBIC)
     image_mask = cv2.resize(image[:,:,1], dsize=(256,256),interpolation=cv2.INTER_CUBIC)
+
+    image_mask = make_binary(image_mask, 0.5)
+
+    '''
+    #For adding constraints to the synthetic data included in the training data
+    labeled_image,count = measure.label(image_mask, return_num=True)
+    objects = regionprops(labeled_image)
+    object_areas = [obj["area"] for obj in objects]
+    small_met = False
+    for elem in object_areas:
+        if elem < 25 and len(object_areas) <= 3: #sjekker om det finnes minst én liten metastase i bildet, spørsmålet er hvor cut-off arealet bør gå?
+            small_met = True
+    if small_met:
+        image_MR = np.expand_dims(image_MR, axis = 0)
+        image_mask = np.expand_dims(image_mask, axis = 0)
+        image = np.concatenate((image_MR,image_mask), axis = 0)
+        image = image.astype("float32")
+        syn_data.append(image)
+    '''
+    
     image_MR = np.expand_dims(image_MR, axis = 0)
     image_mask = np.expand_dims(image_mask, axis = 0)
     image = np.concatenate((image_MR,image_mask), axis = 0)
