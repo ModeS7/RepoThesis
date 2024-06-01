@@ -1,3 +1,6 @@
+'''Code to find performance metrics of the different models. Additionnally, it is possible to compare models to each other. As such, it is possible to investigate which areas 
+are detected by one model and undetected by another. Dice per lesion, sensitivity and number of FP are found for cohorts 1-5. '''
+
 from monai.data import Dataset, DataLoader, decollate_batch, CacheDataset
 from torch.utils.data import ConcatDataset
 from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize, CenterSpatialCrop, Activations,AsDiscrete, RandScaleIntensity, RandShiftIntensity, RandFlip, CropForeground, RandRotate90, RandSpatialCrop, RandRotate, RandAdjustContrast, RandHistogramShift, RandSpatialCrop, SpatialPad
