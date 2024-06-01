@@ -1,3 +1,5 @@
+'''Parts of this code is adapted from the MONAI consortsium's tutorial for realism diversity metrics for generative models. 
+https://github.com/Project-MONAI/GenerativeModels/blob/main/tutorials/generative/realism_diversity_metrics/realism_diversity_metrics.ipynb'''
 from monai.data import Dataset, DataLoader 
 from torch.utils.data import ConcatDataset
 import os
