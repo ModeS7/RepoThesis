@@ -25,17 +25,17 @@ print_config()
 
 from generative.metrics import MultiScaleSSIMMetric, SSIMMetric,  FIDMetric
 
-from helper_functions import merge_data, extract_slices, transform_128, NiFTIDataset
+from helper_functions import merge_data, extract_slices, transform_train_mask, NiFTIDataset
 
 '''Loading real data'''
 data_dir_train = "Masteroppgave/Data/BrainMets/StanfordSkullStripped/train"
 data_dir_test = "/Masteroppgave/Data/BrainMets/StanfordSkullStrippedTest"
 
-bravo_dataset_train = NiFTIDataset(data_dir= data_dir_train,mr_sequence="bravo", transform = transform_128)
-labels_dataset_train = NiFTIDataset(data_dir= data_dir_train,mr_sequence="seg", transform = transform_128)
+bravo_dataset_train = NiFTIDataset(data_dir= data_dir_train,mr_sequence="bravo", transform = transform_train_mask)
+labels_dataset_train = NiFTIDataset(data_dir= data_dir_train,mr_sequence="seg", transform = transform_train_mask)
 
-bravo_dataset_val = NiFTIDataset(data_dir= data_dir_test,mr_sequence="bravo", transform = transform_128)
-labels_dataset_val = NiFTIDataset(data_dir= data_dir_test,mr_sequence="seg", transform = transform_128)
+bravo_dataset_val = NiFTIDataset(data_dir= data_dir_test,mr_sequence="bravo", transform = transform_train_mask)
+labels_dataset_val = NiFTIDataset(data_dir= data_dir_test,mr_sequence="seg", transform = transform_train_mask)
 
 merged = merge_data(bravo_dataset_train, labels_dataset_train)
 merged_val = merge_data(bravo_dataset_val, labels_dataset_val)
