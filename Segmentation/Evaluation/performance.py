@@ -103,7 +103,7 @@ model_1.eval()
 model_2.eval()
 
 
-''' A little misleading calling this function "sensitivity". The function takes 2 models as 
+''' The function takes 2 models as 
 arguments, in addition to an input dataset (cohorts 1-5). The two models are compared to each other. 
 The dice per lesion, number of false positive lesions are reported. In addition, the areas of the lesions that remained undetected 
 by the models are reported as "model_1_undetected_total" and "model_2_undetected_total". These are used for 2 things
@@ -114,7 +114,8 @@ by the models are reported as "model_1_undetected_total" and "model_2_undetected
 Finally, model_1_undetetected and model_2_undetected are reported. The latter describes the area of the lesions that were detected by model 1, but remained undetected 
 by model_2. These lists were interesting to use when comparing a model trained by including synthetic data versus the model trained on only real data. 
 '''
-def sensitivity(model_1, model_2, input_dataset):
+
+def analyze_performance(model_1, model_2, input_dataset):
     model_1_undetected = []
     model_2_undetected = []
 
@@ -168,24 +169,20 @@ def sensitivity(model_1, model_2, input_dataset):
             dice_per_lesion_list_2 = dice_per_lesion( y= val_labelss[j][1,:,:], y_pred = val_outputss_2[j][1,:,:])
             for elem in dice_per_lesion_list_2:
                 dice_per_lesion_2.append(elem)
-        
+
+        ##### Code for finding model_1_undetected and model_2_undetected#####
         #image mask is true segmentation mask
-        image_a_binary = np.array(val_labelss[0][1])
+        image_a_binary = np.uint8(np.array(val_labelss[0][1]))
 
 
         #images b and c are predicted segmentation mask times true segmentation mask, thus ignoring FP. 
-        image_b_binary = np.array(val_outputss[0][1]*val_labelss[0][1])
-        image_c_binary = np.array(val_outputss_2[0][1]*val_labelss[0][1])
+        image_b_binary = np.uint8(np.array(val_outputss[0][1]*val_labelss[0][1]))
+        image_c_binary = np.uint8(np.array(val_outputss_2[0][1]*val_labelss[0][1]))
         
         #images d and e are predicted segmentation masks. To find FP later
-        image_d_binary = np.array(val_outputss[0][1])
-        image_e_binary = np.array(val_outputss_2[0][1])
+        image_d_binary = np.uint8(np.array(val_outputss[0][1]))
+        image_e_binary = np.uint8(np.array(val_outputss_2[0][1]))
 
-        image_a_binary = np.uint8(image_a_binary)
-        image_b_binary = np.uint8(image_b_binary)
-        image_c_binary = np.uint8(image_c_binary)
-        image_d_binary = np.uint8(image_d_binary)
-        image_e_binary = np.uint8(image_e_binary)
         _, labels_a = cv2.connectedComponents(image_a_binary)
         _, labels_b = cv2.connectedComponents(image_b_binary)
         _, labels_c = cv2.connectedComponents(image_c_binary)
@@ -261,6 +258,7 @@ def sensitivity(model_1, model_2, input_dataset):
         if np.sum(new_image_2) != 0 and np.sum(new_image) == 0:
             for elem in object_areas_2:
                 model_2_undetected.append(elem)
+                
         #if both models have undetected mets
         if np.sum(new_image_2) != 0 and np.sum(new_image) != 0:
 
@@ -270,6 +268,7 @@ def sensitivity(model_1, model_2, input_dataset):
 
             for elem in object_areas_multi:
                 undetected_by_both.append(elem)
+                
             #if there are more undetected mets by model 2 than model 1, model 2 have undetected mets that model 1 has detected
             if count_1 < count_2: 
                 labeled_image_F,_ = measure.label(new_image_2 - new_image, return_num=True) 
@@ -278,6 +277,7 @@ def sensitivity(model_1, model_2, input_dataset):
 
                 for elem in object_areas_F:
                     model_2_undetected.append(elem)
+                    
             #if there are more undetected mets by model 1 than model 2, model 1 has undetected mets that model 2 has detected
             if count_1 > count_2: 
                 labeled_image_G,_ = measure.label(new_image - new_image_2, return_num=True) #
@@ -294,5 +294,5 @@ def sensitivity(model_1, model_2, input_dataset):
 datasets = [only_small_mets, small_mets, only_medium_mets, medium_mets, val_dataset]
 
 for dataset in datasets:
-    model_1_undetected_total, model_2_undetected_total, model_1_undetected, model_2_undetected, undetected_by_both, num_mets, dice_per_lesion_1, dice_per_lesion_2, fp_list_1, fp_list_2 = sensitivity(model_1, model_2, dataset)
+    model_1_undetected_total, model_2_undetected_total, model_1_undetected, model_2_undetected, undetected_by_both, num_mets, dice_per_lesion_1, dice_per_lesion_2, fp_list_1, fp_list_2 = analyze_performance(model_1, model_2, dataset)
     
