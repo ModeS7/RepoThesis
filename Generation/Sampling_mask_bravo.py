@@ -20,17 +20,12 @@ import torch
 from generative.inferers import DiffusionInferer
 from generative.networks.nets import DiffusionModelUNet
 from generative.networks.schedulers import DDPMScheduler
-import matplotlib.pyplot as plt
-from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize
-from monai.data import Dataset
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import autocast
 from tqdm import tqdm
 
-from monai.utils import set_determinism
 from skimage.measure import label,regionprops
 from monai.config import print_config
 import nibabel as nib
-import os
 import numpy as np
 print_config()
 #################################################
