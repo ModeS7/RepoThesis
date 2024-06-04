@@ -1,24 +1,20 @@
 '''Code to find performance metrics of the different models. Additionnally, it is possible to compare models to each other. As such, it is possible to investigate which areas 
 are detected by one model and undetected by another. Dice per lesion, sensitivity and number of FP are found for cohorts 1-5. '''
 
-from monai.data import Dataset, DataLoader, decollate_batch, CacheDataset
-from torch.utils.data import ConcatDataset
-from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize, CenterSpatialCrop, Activations,AsDiscrete, RandScaleIntensity, RandShiftIntensity, RandFlip, CropForeground, RandRotate90, RandSpatialCrop, RandRotate, RandAdjustContrast, RandHistogramShift, RandSpatialCrop, SpatialPad
+from monai.data import decollate_batch, CacheDataset
+from monai.transforms import Compose, AsDiscrete, 
 from monai.networks.nets import UNet
 from monai.networks.layers import Norm
 from monai.inferers import sliding_window_inference
 from sklearn.metrics import confusion_matrix, recall_score, precision_score
 from skimage.measure import label,regionprops
 from skimage import measure
-import os
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-import nibabel as nib
 import cv2
 
 from helper_functions import NiFTIDataset, transform_train_mask, extract_slices, merge_data
-from performance_functions import dice_per_lesion
+from dice_per_lesion import dice_per_lesion
 
 
 data_dir_train = "Masteroppgave/Data/BrainMets/StanfordSkullStripped/train"
