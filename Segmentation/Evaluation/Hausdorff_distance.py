@@ -35,6 +35,7 @@ def find_HD(y, y_pred):  # should have shapes [H, W]
     for elem_pred in lesion_images_pred:
         for elem_gt in lesion_images_gt:
             # If sum > 0 there is an overlap between the true and predicted lesion --> find hausdorff distance between the two
+            # can also be used to verify that the model sensitivity found in performance.py is correct (it was). This code logic is simpler to follow 
             if np.sum(elem_pred*elem_gt > 0):
                 HD = metrics.hausdorff_distance(elem_pred, elem_gt)
                 HD_list.append(HD)
