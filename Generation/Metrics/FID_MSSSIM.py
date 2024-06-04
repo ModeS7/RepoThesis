@@ -12,17 +12,12 @@
 #Parts of this code is adapted from the MONAI consortsium's tutorial for realism diversity metrics for generative models. 
 #https://github.com/Project-MONAI/GenerativeModels/blob/main/tutorials/generative/realism_diversity_metrics/realism_diversity_metrics.ipynb
 
-from monai.data import Dataset, DataLoader 
-from torch.utils.data import ConcatDataset
+from monai.data import DataLoader 
 import os
 import torch
 import numpy as np
-import monai
-import matplotlib.pyplot as plt
 from monai.config import print_config
 import nibabel as nib
-print_config()
-
 from generative.metrics import MultiScaleSSIMMetric, SSIMMetric,  FIDMetric
 
 from helper_functions import merge_data, extract_slices, transform_train_mask, NiFTIDataset
