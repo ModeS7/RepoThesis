@@ -1,5 +1,7 @@
 from skimage.measure import label, regionprops
 import numpy as np
+
+#Function to calculate the dice per lesion
 def dice_per_lesion(y, y_pred):
     #label true and predicted segmentation masks
     labeled_image,count = label(y, return_num=True)
