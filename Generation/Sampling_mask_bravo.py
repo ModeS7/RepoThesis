@@ -1,4 +1,4 @@
-'''Code for sampling both synthetic annotation mask and synthetic bravo image'''
+#Code for sampling both synthetic annotation mask and synthetic BARVO image
 num_images = 15000
 
 ###importing necessary libraries########
