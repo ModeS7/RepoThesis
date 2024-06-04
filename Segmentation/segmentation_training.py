@@ -15,50 +15,30 @@
 '''Code for training segmentation model'''
 from monai.data import Dataset, DataLoader, decollate_batch, CacheDataset
 from torch.utils.data import ConcatDataset
-from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize, CenterSpatialCrop, Activations,AsDiscrete, RandScaleIntensity, RandShiftIntensity, RandFlip, CropForeground, RandRotate90, RandSpatialCrop, RandRotate, RandAdjustContrast, RandHistogramShift, RandSpatialCrop, SpatialPad
+from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize,AsDiscrete, RandScaleIntensity, RandShiftIntensity, RandFlip, RandRotate90, RandRotate, RandAdjustContrast, RandHistogramShift
 from monai.networks.nets import UNet
 from monai.metrics import DiceMetric
 from monai.losses import DiceCELoss
 from monai.networks.layers import Norm
 from sklearn.metrics import confusion_matrix, recall_score, precision_score
 from skimage.measure import label,regionprops
-from skimage import measure
 from torch.utils.tensorboard import SummaryWriter
 import os
 import torch
 import numpy as np
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 import nibabel as nib
 import cv2
-data_dir_train = "/cluster/home/annambek/Masteroppgave/Data/BrainMets/StanfordSkullStripped/train"
-data_dir_test = "/cluster/home/annambek/Masteroppgave/Data/BrainMets/StanfordSkullStrippedTest"
+data_dir_train = "/Masteroppgave/Data/BrainMets/StanfordSkullStripped/train"
+data_dir_test = "/Masteroppgave/Data/BrainMets/StanfordSkullStrippedTest"
 
-#OBS TEST, må være extract slices som bare tar kreft-slicer
-from Evaluation.dice_per_lesion import dice_per_lesion
-from helper_functions import merge_data, make_binary, extract_slices 
+
+from dice_per_lesion import dice_per_lesion
+from helper_functions import merge_data, make_binary, extract_slices, NiFTIDataset, transform_train_mask
 
 
 
 model_name = "5000__syn__cuttoff25_max3__binary_5em4_dropout0.2"
-
-class NiFTIDataset(Dataset):
-    def __init__(self, data_dir, mr_sequence, transform = None):
-        self.data_dir = data_dir
-        self.data = os.listdir(data_dir) 
-       # self.data = np.array(self.data) #+ "/" + mr_sequence + "nii.gz"
-        self.data.sort()
-        self.mr_sequence = mr_sequence
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, index):
-        nifti_file = os.path.join(self.data_dir, self.data[index] +  "/" + self.mr_sequence + ".nii.gz")
-        if self.transform is not None:
-            nifti_file = self.transform(nifti_file)
-        return nifti_file, self.data[index] 
 
 #Transform to be applied to bravo image before merge with label
 transform_train_image = Compose( 
@@ -75,16 +55,6 @@ transform_train_image = Compose(
     ]
 )
 
-#Transform to be applied to the annotation masks + for bravo validation aswell 
-transform_train_mask = Compose(
-    [
-        LoadImage(image_only = True), 
-        EnsureChannelFirst(), 
-        ToTensor(),
-        ScaleIntensity(minv = 0.0, maxv = 1.0),
-        Resize(spatial_size = (256, 256, -1)), 
-    ]
-)
 
 #Transform to be applied after the bravo-seg merge
 transform_after_merge_train = Compose([ 
