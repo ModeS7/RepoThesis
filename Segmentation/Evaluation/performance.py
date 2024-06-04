@@ -29,8 +29,8 @@ labels_dataset_val = NiFTIDataset(data_dir= data_dir_test,mr_sequence="seg", tra
 
 merged_val = merge_data(bravo_dataset_val, labels_dataset_val)
 val_dataset = extract_slices(merged_val, 1.0)
-
-'''Dividing validation dataset into cohorts'''
+##############################################################################################################
+#Dividing test dataset into cohorts
 
 small_mets = []
 medium_mets = []
@@ -63,7 +63,9 @@ only_small_mets = CacheDataset(data = only_small_mets)
 medium_mets = CacheDataset(data = medium_mets + only_medium_mets)
 only_medium_mets = CacheDataset(data = only_medium_mets)
 
-'''Load trained models'''
+################################################################################################################
+
+#Load trained models
 
 model_real_data = "Masteroppgave/Trained_models/BrainMets/Runs_to_evaluate/6april_best_modelUNet_20000_5em4_dropout_0.2"
 model_1 = UNet(
@@ -100,6 +102,18 @@ model_2 = model_2.to(device)
 model_1.eval()
 model_2.eval()
 
+
+''' A little misleading calling this function "sensitivity". The function takes 2 models as 
+arguments, in addition to an input dataset (cohorts 1-5). The two models are compared to each other. 
+The dice per lesion, number of false positive lesions are reported. In addition, the areas of the lesions that remained undetected 
+by the models are reported as "model_1_undetected_total" and "model_2_undetected_total". These are used for 2 things
+
+1) To calculate the model's sensitivity: num_mets - len(model_1_undetected_total) / (num_mets)
+2) To get an idea of how small / large the undetected metastases are. 
+
+Finally, model_1_undetetected and model_2_undetected are reported. The latter describes the area of the lesions that were detected by model 1, but remained undetected 
+by model_2. These lists were interesting to use when comparing a model trained by including synthetic data versus the model trained on only real data. 
+'''
 def sensitivity(model_1, model_2, input_dataset):
     model_1_undetected = []
     model_2_undetected = []
