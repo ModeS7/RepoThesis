@@ -13,7 +13,7 @@
 #https://github.com/Project-MONAI/GenerativeModels/blob/main/tutorials/generative/2d_ddpm/2d_ddpm_tutorial.ipynb
 
 
-'''Training mask-conditioned diffusion model / training diffusion model for synthesizing annotation masks'''
+# Code for training mask-conditioned diffusion model / training diffusion model for synthesizing annotation masks
 
 '''loading necessary libraries'''
 import nibabel as nib
