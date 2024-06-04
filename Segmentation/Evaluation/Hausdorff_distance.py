@@ -1,5 +1,7 @@
 
 from skimage import metrics
+from skimage.measure import label, regionprops
+import numpy as np
 # Function to find Hausdorff distance between the true segmentation mask y and the predicted segmentation mask y_pred
 def find_HD(y, y_pred):  # should have shapes [H, W]   
     # label preditcted mask
