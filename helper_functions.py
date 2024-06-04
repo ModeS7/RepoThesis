@@ -24,6 +24,7 @@ class NiFTIDataset(Dataset):
         return nifti_file, self.data[index] 
     
 
+''' transform before segmentation training. Change spatial_size to (128, 128, -1) for diffusion model training'''
 transform_train_mask = Compose(
     [
         LoadImage(image_only = True), 
@@ -34,7 +35,7 @@ transform_train_mask = Compose(
     ]
 )
 
-'''Function to merge bravo images with corresponding labels'''
+'''Function to merge BRAVO images with corresponding labels'''
 def merge_data(dataset1, dataset2):
     dataset_tuple = []
     for i in range(len(dataset1)):
@@ -47,7 +48,7 @@ def merge_data(dataset1, dataset2):
 
     return Dataset(dataset_tuple)
 
-'''Function to make labels (synthetic) binary. Threshold used is 0.01.'''
+'''Function to make labels binary. Threshold used is 0.01.'''
 def make_binary(image, threshold):
     image_binary = np.zeros_like(image)
     for i in range(image.shape[0]):
@@ -57,7 +58,8 @@ def make_binary(image, threshold):
     return image_binary
 
 '''Function to extract slices from 3D volume. Only slices containing pathology is extracted. thres = threshold
-to chech whether the slice contains pathology.'''
+to chech whether the slice contains pathology. For the mask-conditioned synthesis, all non-empty slices were included. 
+Change line 73 in that case. '''
 def extract_slices(nifti_dataset, thres):
     total_dataset = Dataset([])
     for i in range(len(nifti_dataset)):
