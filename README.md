@@ -5,4 +5,4 @@ The "Generation" folder includes the code used for training the diffusion models
 images is also found in this folder. This includes code for finding FID, IS and MS-SSIM / SSIM values. Different tutorials from the MONAI consortsium have been used when writing the code, and the link to these tutorials are provided
 in the files. 
 
-The "Segmentation" folder includes code for the training of the segmentation model used for the different segmentation experiments. Also a performance.py file is included that was used to test the model performance after training. : 
+The "Segmentation" folder includes code for the training of the segmentation model used for the different segmentation experiments. Also performance.py, dice_per_lesion.py and hausdorff_distance.py files are included that were used to test the model performance after training.
