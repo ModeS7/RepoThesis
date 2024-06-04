@@ -16,11 +16,9 @@
 # Code for training mask-conditioned diffusion model / training diffusion model for synthesizing annotation masks
 
 '''loading necessary libraries'''
-import nibabel as nib
 import os
 from monai.data import Dataset, DataLoader
 import numpy as np
-import matplotlib.pyplot as plt
 import torch.nn.functional as F
 import torch
 from generative.inferers import DiffusionInferer
@@ -29,7 +27,7 @@ from generative.networks.schedulers import DDPMScheduler
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 from torch.utils.data import ConcatDataset
-from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize, CenterSpatialCrop, CropForeground
+from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize
 
 
 model_input = 2 #model input is 2 for mask-conditioned synthesis, 1 for synthetic annotation mask synthesis
