@@ -10,10 +10,10 @@ torchaudio==2.7.0
 # Medical Imaging Framework
 monai[all]
 
-# Core Scientific Computing
-numpy>=1.24.0,<2.0.0
-scipy>=1.9.0
-scikit-image>=0.20.0
+# Core Scientific Computing - Updated for 2025 ecosystem
+numpy>=2.1.0,<3.0.0
+scipy>=1.11.0
+scikit-image>=0.21.0
 scikit-learn>=1.3.0
 
 # Medical Image I/O and Processing
@@ -32,6 +32,7 @@ opencv-python>=4.8.0
 lpips>=0.1.4
 pytorch-fid>=0.3.0
 torchmetrics>=1.2.0
+einops>=0.7.0
 
 # Progress Tracking and Logging
 tqdm>=4.66.0
