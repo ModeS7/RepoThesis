@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ############################################################################3
-#This code was adapted from the MONAI consortsium's tutorial for training a 2D DDPM: 
+#This code was adapted from the MONAI consortsium's tutorial for training a 2D DDPM:
 #https://github.com/Project-MONAI/GenerativeModels/blob/main/tutorials/generative/2d_ddpm/2d_ddpm_tutorial.ipynb
 
 
@@ -31,20 +31,16 @@ from torch.utils.data import ConcatDataset
 from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize
 
 
-model_input = 2 #model input is 2 for mask-conditioned synthesis, 1 for synthetic annotation mask synthesis
+model_input = 1 #model input is 2 for mask-conditioned synthesis, 1 for synthetic annotation mask synthesis
 
 ############Diffusion model for synthetic bravo images controlled with annotation masks###########################
 #####Preprocessing##############
 data_dir = r"C:\NTNU\MedicalDataSets\brainmetshare-3\train"
-transform = Compose(
-    [
-        LoadImage(image_only = True), 
-        EnsureChannelFirst(), 
-        ToTensor(),
-        ScaleIntensity(minv = 0.0, maxv = 1.0),
-        Resize(spatial_size = (128, 128, -1)), 
-    ]
-)
+transform = Compose([LoadImage(image_only = True),
+                     EnsureChannelFirst(),
+                     ToTensor(),
+                     ScaleIntensity(minv = 0.0, maxv = 1.0),
+                     Resize(spatial_size = (128, 128, -1))])
 
 '''OBS!! Hent denne inn fra helper_functions heller'''
 class NiFTIDataset(Dataset):
@@ -59,13 +55,11 @@ class NiFTIDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, index):
-        nifti_file = os.path.join(self.data_dir, self.data[index] +  "/" + self.mr_sequence + ".nii.gz")
+        nifti_file = os.path.join(self.data_dir, self.data[index] +
+                                  "/" + self.mr_sequence + ".nii.gz")
         if self.transform is not None:
             nifti_file = self.transform(nifti_file)
-        return nifti_file, self.data[index] 
-
-bravo_dataset = NiFTIDataset(data_dir= data_dir,mr_sequence="bravo", transform = transform)
-seg_dataset = NiFTIDataset(data_dir= data_dir,mr_sequence="seg", transform = transform)
+        return nifti_file, self.data[index]
 
 def merge_data(dataset1, dataset2):
     dataset_tuple = []
@@ -95,7 +89,9 @@ def extract_slices(nifti_dataset): #make segmentations binary when time
             #print(i)
             image_stack = nifti_dataset.__getitem__(index = i) 
 
-            images = [image_stack[:,:,:,k] for k in range(image_stack.shape[3])] #each image has shape (2,128,128) , first element is bravo image, second is seg
+            images = [image_stack[:,:,:,k] for k in range(
+                image_stack.shape[3])] #each image has shape (2,128,128),
+            # first element is bravo image, second is seg
             non_empty_images = []
             for image in images:
                 if np.sum(image) > 1.0:
@@ -104,29 +100,28 @@ def extract_slices(nifti_dataset): #make segmentations binary when time
             total_dataset = ConcatDataset([total_dataset, images])
     return total_dataset 
 
-merged = merge_data(bravo_dataset, seg_dataset) 
+
+bravo_dataset = NiFTIDataset(data_dir= data_dir,mr_sequence="bravo", transform = transform)
+seg_dataset = NiFTIDataset(data_dir= data_dir,mr_sequence="seg", transform = transform)
+
+merged = merge_data(bravo_dataset, seg_dataset)
 train_dataset = extract_slices(merged)
 
 bs = 16
 train_data_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True)
 device = torch.device("cuda")
 
-model = DiffusionModelUNet(
-    spatial_dims=2,
-    in_channels=model_input, 
-    out_channels=1,
-    num_channels=(128, 256, 256), 
-    attention_levels=(False, True, True),
-    num_res_blocks=1,
-    num_head_channels=256,
-)
+model = DiffusionModelUNet(spatial_dims=2,
+                           in_channels=model_input,
+                           out_channels=1,
+                           num_channels=(128, 256, 256),
+                           attention_levels=(False, True, True),
+                           num_res_blocks=1,
+                           num_head_channels=256)
 
 model.to(device)
-
-scheduler = DDPMScheduler(num_train_timesteps=1000)
-
 optimizer = torch.optim.Adam(params=model.parameters(), lr=2.5e-5)
-
+scheduler = DDPMScheduler(num_train_timesteps=1000)
 inferer = DiffusionInferer(scheduler)
 
 '''Training'''
@@ -148,8 +143,13 @@ for epoch in range(n_epochs):
     
     progress_bar = tqdm(enumerate(train_data_loader), total=len(train_data_loader), ncols=70)
     progress_bar.set_description(f"Epoch {epoch}")
-    for step, batch in progress_bar: 
-        images = batch.to(device)
+    for step, batch in progress_bar:
+        if model_input == 1:
+            # Extract only the segmentation masks (second channel) for mask generation
+            images = batch[:, 1:2, :, :].to(device)  # Keep only seg channel, maintain 4D shape
+        if model_input == 2:
+            images = batch.to(device)
+
         optimizer.zero_grad(set_to_none=True)
 
         with autocast(enabled=True):
@@ -181,8 +181,11 @@ for epoch in range(n_epochs):
 
     if (epoch + 1) % val_interval == 0:
           model.eval()
-          path = (r"C:\NTNU\RepoThesis\trained_model\conditional_syn_bravo_from_seg_"
-                  + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs))
-          #path = r"C:\NTNU\RepoThesis\trained_model\syn_seg_"
-          # + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs)
+          if model_input == 1:
+              path = (r"C:\NTNU\RepoThesis\trained_model\syn_seg_"
+                      + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs))
+          if model_input == 2:
+              path = (r"C:\NTNU\RepoThesis\trained_model\conditional_syn_bravo_from_seg_"
+                      + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs))
+
           torch.save(model.state_dict(), path)
