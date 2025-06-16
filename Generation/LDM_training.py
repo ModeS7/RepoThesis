@@ -13,7 +13,7 @@
 # https://github.com/Project-MONAI/GenerativeModels/blob/main/tutorials/generative/2d_ddpm/2d_ddpm_tutorial.ipynb
 
 
-# Code for training mask-conditioned diffusion model / training diffusion model for synthesizing annotation masks
+# Code for training mask-conditioned latent diffusion model / training latent diffusion model for synthesizing annotation masks
 
 '''loading necessary libraries'''
 import os
@@ -23,16 +23,16 @@ import torch.nn.functional as F
 import torch
 import time
 from generative.inferers import DiffusionInferer
-from generative.networks.nets import DiffusionModelUNet
+from generative.networks.nets import DiffusionModelUNet, AutoencoderKL  # Added AutoencoderKL
 from generative.networks.schedulers import DDPMScheduler
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 from torch.utils.data import ConcatDataset
 from monai.transforms import Compose, LoadImage, ToTensor, ScaleIntensity, EnsureChannelFirst, Resize
 
-model_input = 1  # model input is 2 for mask-conditioned synthesis, 1 for synthetic annotation mask synthesis
+model_input = 2  # model input is 2 for mask-conditioned synthesis, 1 for synthetic annotation mask synthesis
 
-############Diffusion model for synthetic bravo images controlled with annotation masks###########################
+############Latent Diffusion model for synthetic bravo images controlled with annotation masks###########################
 #####Preprocessing##############
 data_dir = r"C:\NTNU\MedicalDataSets\brainmetshare-3\train"
 transform = Compose([LoadImage(image_only=True),
@@ -110,17 +110,46 @@ seg_dataset = NiFTIDataset(data_dir=data_dir, mr_sequence="seg", transform=trans
 merged = merge_data(bravo_dataset, seg_dataset)
 train_dataset = extract_slices(merged)
 
-bs = 16
+bs = 16*16
 train_data_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True)
 device = torch.device("cuda")
 
-model = DiffusionModelUNet(spatial_dims=2,
-                           in_channels=model_input,
-                           out_channels=1,
-                           num_channels=(128, 256, 256),
-                           attention_levels=(False, True, True),
-                           num_res_blocks=1,
-                           num_head_channels=256)
+# ===== NEW: Initialize Autoencoder for Latent Diffusion =====
+autoencoder = AutoencoderKL(
+    spatial_dims=2,
+    in_channels=1,
+    out_channels=1,
+    num_channels=(128, 128, 256),
+    latent_channels=4,  # Latent space channels
+    num_res_blocks=2,
+    attention_levels=(False, False, False),
+    with_encoder_nonlocal_attn=False,
+    with_decoder_nonlocal_attn=False,
+)
+
+# Load pretrained autoencoder or train from scratch
+# If you have a pretrained autoencoder, load it here:
+# autoencoder.load_state_dict(torch.load("path_to_pretrained_autoencoder.pth"))
+autoencoder.to(device)
+autoencoder.eval()  # Set to eval mode if using pretrained
+
+# Calculate latent space dimensions
+sample_input = torch.randn(1, 1, 128, 128).to(device)
+with torch.no_grad():
+    latent_sample = autoencoder.encode_stage_2_inputs(sample_input)
+latent_shape = latent_sample.shape
+print(f"Latent shape: {latent_shape}")
+
+# ===== MODIFIED: Diffusion model for latent space =====
+model = DiffusionModelUNet(
+    spatial_dims=2,
+    in_channels=latent_shape[1] if model_input == 1 else latent_shape[1] + 1,  # +1 for conditioning mask
+    out_channels=latent_shape[1],  # Output latent channels
+    num_channels=(128, 256, 256),
+    attention_levels=(False, True, True),
+    num_res_blocks=1,
+    num_head_channels=256
+)
 
 model.to(device)
 optimizer = torch.optim.Adam(params=model.parameters(), lr=2.5e-5)
@@ -130,7 +159,7 @@ inferer = DiffusionInferer(scheduler)
 '''Training'''
 
 n_epochs = 200
-val_interval = 25
+val_interval = 5
 # metric lists
 epoch_accuracy_list = []
 epoch_loss_list = []
@@ -147,33 +176,44 @@ for epoch in range(n_epochs):
     progress_bar = tqdm(enumerate(train_data_loader), total=len(train_data_loader), ncols=70)
     progress_bar.set_description(f"Epoch {epoch}")
     for step, batch in progress_bar:
-        if model_input == 1:
-            # Extract only the segmentation masks (second channel) for mask generation
-            images = batch[:, 1:2, :, :].to(device)  # Keep only seg channel, maintain 4D shape
-        if model_input == 2:
-            images = batch.to(device)
-
         optimizer.zero_grad(set_to_none=True)
 
         with autocast(enabled=True):
             if model_input == 1:
-                noise = torch.randn_like(images).to(device)
+                # Extract only the segmentation masks (second channel) for mask generation
+                images = batch[:, 1:2, :, :].to(device)  # Keep only seg channel, maintain 4D shape
+
+                # ===== NEW: Encode to latent space =====
+                with torch.no_grad():
+                    latents = autoencoder.encode_stage_2_inputs(images)
+
+                noise = torch.randn_like(latents).to(device)
                 timesteps = torch.randint(0, inferer.scheduler.num_train_timesteps,
-                                          (images.shape[0],), device=images.device).long()
-                noise_pred = inferer(inputs=images, diffusion_model=model, noise=noise, timesteps=timesteps)
+                                          (latents.shape[0],), device=latents.device).long()
+                noise_pred = inferer(inputs=latents, diffusion_model=model, noise=noise, timesteps=timesteps)
+
             if model_input == 2:
                 images_bravo = batch[:, 0, :, :].to(device)  # to synthesize: bravo
-                images_labels = batch[:, 1, :, :].to(device)  # conditionning: labels
+                images_labels = batch[:, 1, :, :].to(device)  # conditioning: labels
                 images_bravo = torch.unsqueeze(images_bravo, 1)
                 images_labels = torch.unsqueeze(images_labels, 1)
-                noise = torch.randn_like(images_bravo).to(device)
-                timesteps = torch.randint(0, inferer.scheduler.num_train_timesteps,
-                                          (images_bravo.shape[0],), device=images.device).long()
 
-                noisy_bravo = scheduler.add_noise(original_samples=images_bravo,
-                                                  noise=noise, timesteps=timesteps)
-                noisy_bravo_w_label = torch.cat((noisy_bravo, images_labels), dim=1)
-                noise_pred = model(x=noisy_bravo_w_label, timesteps=timesteps)
+                # ===== NEW: Encode bravo images to latent space =====
+                with torch.no_grad():
+                    latents_bravo = autoencoder.encode_stage_2_inputs(images_bravo)
+                    # Resize labels to match latent spatial dimensions if needed
+                    latent_h, latent_w = latents_bravo.shape[2], latents_bravo.shape[3]
+                    if images_labels.shape[2] != latent_h or images_labels.shape[3] != latent_w:
+                        images_labels = F.interpolate(images_labels, size=(latent_h, latent_w), mode='nearest')
+
+                noise = torch.randn_like(latents_bravo).to(device)
+                timesteps = torch.randint(0, inferer.scheduler.num_train_timesteps,
+                                          (latents_bravo.shape[0],), device=latents_bravo.device).long()
+
+                noisy_latents = scheduler.add_noise(original_samples=latents_bravo,
+                                                    noise=noise, timesteps=timesteps)
+                noisy_latents_w_label = torch.cat((noisy_latents, images_labels), dim=1)
+                noise_pred = model(x=noisy_latents_w_label, timesteps=timesteps)
 
             loss = F.mse_loss(noise_pred.float(), noise.float())
 
@@ -182,13 +222,16 @@ for epoch in range(n_epochs):
         scaler.update()
         epoch_loss += loss.item()
 
-    if (epoch + 1) % val_interval == 0:
+    if (epoch + 1) % val_interval == 0 or epoch == n_epochs - 1:
         model.eval()
         if model_input == 1:
-            path = (r"C:\NTNU\RepoThesis\trained_model\syn_seg_"
+            path = (r"C:\NTNU\RepoThesis\trained_model\ldm_syn_seg_"
                     + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs))
         if model_input == 2:
-            path = (r"C:\NTNU\RepoThesis\trained_model\conditional_syn_bravo_from_seg_"
+            path = (r"C:\NTNU\RepoThesis\trained_model\ldm_conditional_syn_bravo_from_seg_"
                     + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs))
 
-        torch.save(model.state_dict(), path)
+        torch.save({
+            'diffusion_model': model.state_dict(),
+            'autoencoder': autoencoder.state_dict()
+        }, path)
