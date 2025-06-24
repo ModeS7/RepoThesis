@@ -1,6 +1,8 @@
+"""
+This script trains AutoencoderKL model on a dataset of brain MRI images.
+"""
 import sys
 import os
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import shutil
 import tempfile
@@ -94,7 +96,7 @@ perceptual_loss = PerceptualLoss(
     spatial_dims=2,
     network_type="radimagenet_resnet50",
     #is_fake_3d=False,
-    cache_dir=r"C:\NTNU\RepoThesis\model_cache",
+    cache_dir=r"/model_cache",
     #pretrained=True,
     #channel_wise=False,
 )
