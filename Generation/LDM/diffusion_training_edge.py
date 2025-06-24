@@ -24,6 +24,7 @@ from monai.inferers import DiffusionInferer
 from monai.networks.nets import DiffusionModelUNet
 from monai.networks.schedulers import DDPMScheduler
 from functions import NiFTIDataset, extract_slices_single
+from monai.networks.nets import AutoencoderKL
 
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -39,11 +40,12 @@ torch.backends.cuda.enable_mem_efficient_sdp(True)
 n_epochs = 100
 val_interval = 5
 bs = 16
+latent = True
 
 timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
 # TensorBoard setup
-log_dir = r"C:\NTNU\RepoThesis\tensorboard_logs\diffusion_edge_bravo_64" + timestamp
+log_dir = r"C:\NTNU\RepoThesis\tensorboard_logs\diffusion_edge_bravo_latent_" + timestamp
 writer = SummaryWriter(log_dir)
 
 
@@ -58,27 +60,46 @@ writer = SummaryWriter(log_dir)
 
 
 # Data setup
-data_dir = r"C:\NTNU\MedicalDataSets\brainmetshare-3\train"
-transform = Compose([LoadImage(image_only=True),
-                     EnsureChannelFirst(),
-                     ToTensor(),
-                     ScaleIntensity(minv=0.0, maxv=1.0),
-                     #RandFlip(0.5),
-                     Resize(spatial_size=(64, 64, -1)),
-                     #SpatialCrop(roi_start=[27, 27], roi_end=[227, 227]),  # 200x200
-                     #SpatialCrop(roi_start=[43, 27], roi_end=[211, 227]),
-                     ])
+if not latent:
+    data_dir = r"C:\NTNU\MedicalDataSets\brainmetshare-3\train"
+    transform = Compose([LoadImage(image_only=True),
+                         EnsureChannelFirst(),
+                         ToTensor(),
+                         ScaleIntensity(minv=0.0, maxv=1.0),
+                         #RandFlip(0.5),
+                         Resize(spatial_size=(64, 64, -1)),
+                         #SpatialCrop(roi_start=[27, 27], roi_end=[227, 227]),  # 200x200
+                         #SpatialCrop(roi_start=[43, 27], roi_end=[211, 227]),
+                         ])
 
-dataset = NiFTIDataset(data_dir=data_dir, mr_sequence="bravo", transform=transform)
-train_dataset = extract_slices_single(dataset)
+    dataset = NiFTIDataset(data_dir=data_dir, mr_sequence="bravo", transform=transform)
+    train_dataset = extract_slices_single(dataset)
+    n_channels = 1
+
+if latent:
+    class LatentDataset(torch.utils.data.Dataset):
+        def __init__(self, latent_path):
+            self.latents = np.load(latent_path)
+            print(f"Loaded {len(self.latents)} latent representations with shape {self.latents.shape[1:]}")
+
+        def __len__(self):
+            return len(self.latents)
+
+        def __getitem__(self, idx):
+            # Convert to tensor and ensure float32
+            latent = torch.from_numpy(self.latents[idx]).float()
+            return latent
+    latent_path = r"C:\NTNU\MedicalDataSets\latent_data\bravo_latents.npy"
+    train_dataset = LatentDataset(latent_path)
+    n_channels = 8
 train_data_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True, pin_memory=True)
 device = torch.device("cuda")
 
 
 # Model setup
 model = DiffusionModelUNet(spatial_dims=2,
-                           in_channels=1,
-                           out_channels=1,
+                           in_channels=n_channels,
+                           out_channels=n_channels,
                            channels=(128, 256, 256),
                            attention_levels=(False, True, True),
                            num_res_blocks=1,
@@ -92,29 +113,65 @@ inferer = DiffusionInferer(scheduler)
 scaler = GradScaler('cuda')
 
 
+def load_autoencoder_decoder(device):
+    autoencoder = AutoencoderKL(
+        spatial_dims=2,
+        in_channels=1,
+        out_channels=1,
+        channels=(128, 256, 384, 512),
+        latent_channels=8,
+        num_res_blocks=1,
+        norm_num_groups=32,
+        attention_levels=(False, False, False, True),
+    )
+
+    # Load your trained autoencoder weights
+    model_path = r"/trained_model/autoencoder_20250624-022945/autoencoder_edge_bravo_16_Epoch99_of_100"  # Update path
+    autoencoder.load_state_dict(torch.load(model_path))
+    autoencoder.to(device)
+    autoencoder.eval()
+    return autoencoder
+
+autoencoder_decoder = load_autoencoder_decoder(device)
+
 def generate_validation_samples(epoch, num_samples=4):
-    """Generate and log validation samples to TensorBoard - image generation"""
+    """Generate and log validation samples to TensorBoard - latent generation with decoding"""
     model.eval()
     try:
         with torch.no_grad():
-            noise = torch.randn((num_samples, 1, 64, 64), device=device)
+            # Generate noise in latent space dimensions (8 channels, 16x16)
+            noise = torch.randn((num_samples, 8, 16, 16), device=device)
+
             with autocast(device_type="cuda", enabled=True):
-                image = inferer.sample(
+                # Generate latent samples
+                latent_samples = inferer.sample(
                     input_noise=noise,
                     diffusion_model=model,
                     scheduler=scheduler
                 )
-            image_normalized = torch.clamp(image, 0, 1)
-            writer.add_images('Generated_Annotation_Masks', image_normalized, epoch)
-            del noise, image, image_normalized
+
+                # Decode latent samples back to images
+                decoded_images = autoencoder_decoder.decode_stage_2_outputs(latent_samples)
+
+            # Normalize and clamp images for visualization
+            decoded_images_normalized = torch.clamp(decoded_images, 0, 1)
+
+            # Log both latent samples and decoded images
+            writer.add_images('Generated_Latents_Ch0',
+                              torch.clamp(latent_samples[:, 0:1], -3, 3), epoch)
+            writer.add_images('Generated_Decoded_Images', decoded_images_normalized, epoch)
+
+            del noise, latent_samples, decoded_images, decoded_images_normalized
             torch.cuda.empty_cache()
     except Exception as e:
         print(f"Warning: Failed to generate validation samples at epoch {epoch}: {e}")
-        # Still clean up any allocated tensors
+        # Clean up any allocated tensors
         if 'noise' in locals():
             del noise
-        if 'image' in locals():
-            del image
+        if 'latent_samples' in locals():
+            del latent_samples
+        if 'decoded_images' in locals():
+            del decoded_images
         torch.cuda.empty_cache()
     model.train()
 
@@ -156,11 +213,15 @@ for epoch in range(n_epochs):
 
     # Validation and model saving
     if (epoch + 1) % val_interval == 0:
+        newpath = r'C:\NTNU\RepoThesis\trained_model\diffusion_edge' + timestamp
+        if not os.path.exists(newpath):
+            os.makedirs(newpath)
+
         print(f"Generating validation samples...")
         generate_validation_samples(epoch)
 
         model.eval()
-        path = (r"C:\NTNU\RepoThesis\trained_model\diffusion_edge\diffusion_edge_bravo_64"
+        path = (newpath + r"\diffusion_edge_bravo_latent"
                 + str(bs) + "_Epoch" + str(epoch) + "_of_" + str(n_epochs))
         torch.save(model.state_dict(), path)
         print(f"✓ Saved model at epoch {epoch}")
