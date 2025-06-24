@@ -48,17 +48,6 @@ timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 log_dir = r"C:\NTNU\RepoThesis\tensorboard_logs\diffusion_edge_bravo_latent_" + timestamp
 writer = SummaryWriter(log_dir)
 
-
-"""def get_progressive_crop(epoch, max_epochs):
-    #Progressive crop sizing during training
-    if epoch < max_epochs * 0.3:
-        return SpatialCrop(roi_start=[59, 43], roi_end=[195, 211])  # 136x168
-    elif epoch < max_epochs * 0.7:
-        return SpatialCrop(roi_start=[51, 35], roi_end=[203, 219])  # 152x184
-    else:
-        return SpatialCrop(roi_start=[43, 27], roi_end=[211, 227])  # 168x200"""
-
-
 # Data setup
 if not latent:
     data_dir = r"C:\NTNU\MedicalDataSets\brainmetshare-3\train"
@@ -112,68 +101,80 @@ scheduler = DDPMScheduler(num_train_timesteps=1000, schedule='cosine')
 inferer = DiffusionInferer(scheduler)
 scaler = GradScaler('cuda')
 
-
-def load_autoencoder_decoder(device):
-    autoencoder = AutoencoderKL(
-        spatial_dims=2,
-        in_channels=1,
-        out_channels=1,
-        channels=(128, 256, 384, 512),
-        latent_channels=8,
-        num_res_blocks=1,
-        norm_num_groups=32,
-        attention_levels=(False, False, False, True),
-    )
-
-    # Load your trained autoencoder weights
-    model_path = r"/trained_model/autoencoder_20250624-022945/autoencoder_edge_bravo_16_Epoch99_of_100"  # Update path
-    autoencoder.load_state_dict(torch.load(model_path))
-    autoencoder.to(device)
-    autoencoder.eval()
-    return autoencoder
-
-autoencoder_decoder = load_autoencoder_decoder(device)
-
 def generate_validation_samples(epoch, num_samples=4):
-    """Generate and log validation samples to TensorBoard - latent generation with decoding"""
+    """Generate and log validation samples to TensorBoard - supports both latent and pixel diffusion"""
     model.eval()
+
     try:
         with torch.no_grad():
-            # Generate noise in latent space dimensions (8 channels, 16x16)
-            noise = torch.randn((num_samples, 8, 16, 16), device=device)
+            if latent:
+                # Latent diffusion mode
+                noise_shape = (num_samples, 8, 16, 16)
+                log_prefix = "Latent"
+
+                autoencoder = AutoencoderKL(
+                    spatial_dims=2,
+                    in_channels=1,
+                    out_channels=1,
+                    channels=(128, 256, 384, 512),
+                    latent_channels=8,
+                    num_res_blocks=1,
+                    norm_num_groups=32,
+                    attention_levels=(False, False, False, True),
+                )
+                # Load and prepare autoencoder
+                auto_path = r"/trained_model/autoencoder_20250624-022945/autoencoder_edge_bravo_16_Epoch99_of_100"
+                autoencoder.load_state_dict(torch.load(auto_path))
+                autoencoder.to(device)
+                autoencoder.eval()
+
+            else:
+                # Pixel diffusion mode
+                noise_shape = (num_samples, 1, 64, 64)  # Confirm channel count
+                log_prefix = "Pixel"
+
+            # Generate noise and samples
+            noise = torch.randn(noise_shape, device=device)
 
             with autocast(device_type="cuda", enabled=True):
-                # Generate latent samples
-                latent_samples = inferer.sample(
+                samples = inferer.sample(
                     input_noise=noise,
                     diffusion_model=model,
                     scheduler=scheduler
                 )
 
-                # Decode latent samples back to images
-                decoded_images = autoencoder_decoder.decode_stage_2_outputs(latent_samples)
+                if latent:
+                    # Decode latent samples to images
+                    decoded_images = autoencoder.decode_stage_2_outputs(samples)
+                    decoded_images_normalized = torch.clamp(decoded_images, 0, 1)
 
-            # Normalize and clamp images for visualization
-            decoded_images_normalized = torch.clamp(decoded_images, 0, 1)
+                    # Log both latents and decoded images
+                    writer.add_images(f'Generated_{log_prefix}_Ch0',
+                                      torch.clamp(samples[:, 0:1], -3, 3), epoch)
+                    writer.add_images(f'Generated_Decoded_Images',
+                                      decoded_images_normalized, epoch)
+                else:
+                    # Direct image samples
+                    samples_normalized = torch.clamp(samples, 0, 1)
+                    writer.add_images(f'Generated_{log_prefix}_Images',
+                                      samples_normalized, epoch)
 
-            # Log both latent samples and decoded images
-            writer.add_images('Generated_Latents_Ch0',
-                              torch.clamp(latent_samples[:, 0:1], -3, 3), epoch)
-            writer.add_images('Generated_Decoded_Images', decoded_images_normalized, epoch)
-
-            del noise, latent_samples, decoded_images, decoded_images_normalized
+            # Clean up
+            del noise, samples
+            if latent and 'decoded_images' in locals():
+                del decoded_images, decoded_images_normalized
             torch.cuda.empty_cache()
+
     except Exception as e:
         print(f"Warning: Failed to generate validation samples at epoch {epoch}: {e}")
-        # Clean up any allocated tensors
-        if 'noise' in locals():
-            del noise
-        if 'latent_samples' in locals():
-            del latent_samples
-        if 'decoded_images' in locals():
-            del decoded_images
+        # Emergency cleanup
+        for var_name in ['noise', 'samples', 'decoded_images', 'decoded_images_normalized']:
+            if var_name in locals():
+                del locals()[var_name]
         torch.cuda.empty_cache()
-    model.train()
+
+    finally:
+        model.train()
 
 
 # Training loop
