@@ -14,6 +14,7 @@ from tqdm import tqdm
 from monai.inferers import DiffusionInferer
 from monai.networks.nets import DiffusionModelUNet
 from monai.networks.schedulers import DDPMScheduler
+from monai.losses import PerceptualLoss
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim import AdamW
 
@@ -32,27 +33,15 @@ torch._dynamo.config.cache_size_limit = 32
 
 def main(image_type):
     # Training configuration
-    n_epochs = 100
-    val_interval = 5
-    scale = 1
-    bs = 16 * scale
+    n_epochs = 200
+    val_interval = 10
+    bs = 32
     image_size = 128
-    show_para = False  # Set to True to print model parameters
-    #image_type = "seg"  # "seg" or "bravo"
+    show_para = False
+    # image_type = "seg"  # "seg" or "bravo"
 
-    accumulation_schedule = {
-        0: 1,  # First 30 epochs: accumulate every 1 steps (effective batch size: 16)
-        30: 2,  # Epochs 30-60: accumulate every 2 steps (effective batch size: 32)
-        60: 4,  # Epochs 60-100: accumulate every 4 steps (effective batch size: 64)
-    }
-
-    def get_accumulation_steps(epoch):
-        """Get current accumulation steps based on epoch"""
-        current_steps = 1
-        for schedule_epoch in sorted(accumulation_schedule.keys()):
-            if epoch >= schedule_epoch:
-                current_steps = accumulation_schedule[schedule_epoch]
-        return current_steps
+    # Perceptual loss weight
+    perceptual_weight = 0.001
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     sufix = image_type + "_" + str(image_size) + "_" + timestamp
@@ -72,14 +61,14 @@ def main(image_type):
     if image_type == "seg":
         model_input = 1  # Only segmentation masks
         train_dataset = extract_slices_single(seg_dataset)
-    if image_type == "bravo":
-        model_input = 2 # Bravo images with segmentation masks
+    elif image_type == "bravo":
+        model_input = 2  # Bravo images with segmentation masks
         # Merge bravo and seg datasets for training
         merged = merge_data(bravo_dataset, seg_dataset)
         train_dataset = extract_slices(merged)
 
     train_data_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True,
-                                  pin_memory=True, num_workers=4)
+                                   pin_memory=True, num_workers=4)
     device = torch.device("cuda")
     model = DiffusionModelUNet(
         spatial_dims=2,
@@ -89,6 +78,16 @@ def main(image_type):
         attention_levels=(False, True, True),
         num_res_blocks=1,
         num_head_channels=256
+    ).to(device)
+
+    # Initialize perceptual loss - same as autoencoder implementation
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    cache_dir = os.path.join(project_root, "model_cache")
+    perceptual_loss_fn = PerceptualLoss(
+        spatial_dims=2,
+        network_type="radimagenet_resnet50",
+        cache_dir=cache_dir,
+        pretrained=True,
     ).to(device)
 
     # Count model parameters
@@ -101,15 +100,25 @@ def main(image_type):
             print(f"  Trainable parameters: {trainable_params:,}")
         print("-" * 50)
 
-    # Compile the model for performance optimization. Made training at
-    # least 33% faster or more:"default", "reduce-overhead", "max-autotune"
+    # Compile the model for performance optimization
     opt_model = torch.compile(model, mode="default")
-    max_accumulation = max(accumulation_schedule.values())
-    lr = np.sqrt(scale * max_accumulation)
-    optimizer = AdamW(model.parameters(), lr=1e-4 * lr)
-    lr_scheduler = CosineAnnealingLR(optimizer, T_max=n_epochs, eta_min=1e-5 * lr)
+    opt_perceptual_loss = torch.compile(perceptual_loss_fn, mode="reduce-overhead")
+
+    optimizer = AdamW(model.parameters(), lr=1e-4)
+    lr_scheduler = CosineAnnealingLR(optimizer, T_max=n_epochs, eta_min=1e-5)
     scheduler = DDPMScheduler(num_train_timesteps=1000, schedule='cosine')
     inferer = DiffusionInferer(scheduler)
+
+    def predict_clean_image(noisy_image, noise_pred, timesteps, scheduler):
+        """Predict clean image from noisy image and noise prediction"""
+        # Get alpha values for the timesteps
+        alphas_cumprod = scheduler.alphas_cumprod.to(device)
+        alpha_t = alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+        sqrt_alpha_t = torch.sqrt(alpha_t)
+        sqrt_one_minus_alpha_t = torch.sqrt(1 - alpha_t)
+        # Predict clean image: x_0 = (x_t - sqrt(1-alpha_t) * noise) / sqrt(alpha_t)
+        predicted_clean = (noisy_image - sqrt_one_minus_alpha_t * noise_pred) / sqrt_alpha_t
+        return torch.clamp(predicted_clean, 0, 1)
 
     def generate_validation_samples(epoch, num_samples=4, image_type="seg"):
         """Generate and log validation samples to TensorBoard"""
@@ -131,7 +140,7 @@ def main(image_type):
                     bravo_noise = torch.randn_like(seg_masks, device=device)
                     model_input = torch.cat([bravo_noise, seg_masks], dim=1)
 
-                with autocast(device_type="cuda", enabled=True, dtype=torch.float16):
+                with autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
                     samples = inferer.sample(input_noise=model_input, diffusion_model=opt_model, scheduler=scheduler)
 
                 samples_to_log = samples[:, 0:1, :, :] if image_type == "bravo" else samples
@@ -147,10 +156,9 @@ def main(image_type):
     total_start = time.time()
     for epoch in range(n_epochs):
         model.train()
-        current_accumulation_steps = get_accumulation_steps(epoch)
-        epoch_loss, accumulated_loss, effective_batch_count = 0, 0, 0
+        (epoch_loss, epoch_mse_loss, epoch_perceptual_loss) = 0, 0, 0
         progress_bar = tqdm(enumerate(train_data_loader), total=len(train_data_loader), ncols=100)
-        progress_bar.set_description(f"Epoch {epoch} (acc_steps: {current_accumulation_steps})")
+        progress_bar.set_description(f"Epoch {epoch}")
         for step, batch in progress_bar:
             # Saw 5% improvement with this + have to have for torch.compile to work.
             if hasattr(batch, 'as_tensor'):
@@ -165,9 +173,14 @@ def main(image_type):
                     timesteps = torch.randint(0, inferer.scheduler.num_train_timesteps,
                                               (images.shape[0],), device=images.device).long()
                     noise_pred = inferer(inputs=images, diffusion_model=opt_model, noise=noise, timesteps=timesteps)
+                    mse_loss = F.mse_loss(noise_pred.float(), noise.float())
+                    noisy_images = scheduler.add_noise(original_samples=images, noise=noise, timesteps=timesteps)
+                    predicted_clean = predict_clean_image(noisy_images, noise_pred, timesteps, scheduler)
+                    p_loss = opt_perceptual_loss(predicted_clean.float(), images.float())
+
                 if image_type == "bravo":
                     images_bravo = batch[:, 0, :, :].to(device)  # to synthesize: bravo
-                    images_labels = batch[:, 1, :, :].to(device)  # conditionning: labels
+                    images_labels = batch[:, 1, :, :].to(device)  # conditioning: labels
                     images_bravo = torch.unsqueeze(images_bravo, 1)
                     images_labels = torch.unsqueeze(images_labels, 1)
                     noise = torch.randn_like(images_bravo).to(device)
@@ -177,38 +190,33 @@ def main(image_type):
                                                       noise=noise, timesteps=timesteps)
                     noisy_bravo_w_label = torch.cat((noisy_bravo, images_labels), dim=1)
                     noise_pred = opt_model(x=noisy_bravo_w_label, timesteps=timesteps)
+                    mse_loss = F.mse_loss(noise_pred.float(), noise.float())
+                    predicted_clean = predict_clean_image(noisy_bravo, noise_pred, timesteps, scheduler)
+                    p_loss = opt_perceptual_loss(predicted_clean.float(), images_bravo.float())
 
-                loss = F.mse_loss(noise_pred.float(), noise.float())
-                loss = loss / current_accumulation_steps
+                # Combined loss
+                loss = mse_loss + perceptual_weight * p_loss
 
-            # Backward pass
             loss.backward()
-            # Accumulate loss for logging
-            accumulated_loss += loss.item()
-            # Update weights conditionally based on current accumulation steps
-            if (step + 1) % current_accumulation_steps == 0 or (step + 1) == len(train_data_loader):
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-                # Log accumulated loss
-                epoch_loss += accumulated_loss
-                accumulated_loss = 0
-                effective_batch_count += 1
-                # Update progress bar with effective batch loss
-                if effective_batch_count > 0:
-                    avg_loss = epoch_loss / effective_batch_count
-                    progress_bar.set_postfix(
-                        loss=f"{avg_loss:.6f}",
-                        eff_bs=bs * current_accumulation_steps
-                    )
+            optimizer.step()
+            epoch_mse_loss += mse_loss.item()
+            epoch_perceptual_loss += p_loss.item()
+            optimizer.zero_grad(set_to_none=True)
+            epoch_loss += loss.item()
+            progress_bar.set_postfix(loss=f"{epoch_loss / (step + 1):.6f}")
 
         lr_scheduler.step()
+        # Calculate average losses per effective batch
+        avg_epoch_loss = epoch_loss
+        avg_mse_loss = epoch_mse_loss / len(train_data_loader)
+        avg_perceptual_loss = epoch_perceptual_loss / len(train_data_loader)
+        # Log losses separately for comparison
+        writer.add_scalar('Loss/Total', avg_epoch_loss, epoch)
+        writer.add_scalar('Loss/MSE', avg_mse_loss, epoch)
+        writer.add_scalar('Loss/Perceptual', avg_perceptual_loss, epoch)
+        print(f"Epoch {epoch}: Total Loss = {avg_epoch_loss:.6f}, MSE = {avg_mse_loss:.6f}, "
+              f"Perceptual = {avg_perceptual_loss:.6f}")
 
-        # Calculate average loss per effective batch
-        avg_epoch_loss = epoch_loss / effective_batch_count if effective_batch_count > 0 else 0
-        writer.add_scalar('Loss/Training', avg_epoch_loss, epoch)
-        writer.add_scalar('Accumulation_Steps', current_accumulation_steps, epoch)
-        writer.add_scalar('Effective_Batch_Size', bs * current_accumulation_steps, epoch)
-        print(f"Epoch {epoch}: Loss = {avg_epoch_loss:.6f}, Acc Steps = {current_accumulation_steps}, Eff BS = {bs * current_accumulation_steps}")
         if (epoch + 1) % val_interval == 0:
             newpath = f'/home/mode/NTNU/RepoThesis/trained_model/Diffusion_{sufix}'
             os.makedirs(newpath, exist_ok=True)
@@ -225,7 +233,7 @@ def main(image_type):
     print("✓ Training completed! Check TensorBoard for metrics.")
 
 if __name__ == "__main__":
-    list = ["seg", "bravo"]
+    list = ["bravo", "seg"]
     for image_type in list:
         print(f"Starting training for {image_type} images...")
         main(image_type)
